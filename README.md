@@ -17,9 +17,11 @@ Set this environment variable in Vercel:
 
 ```bash
 DATABASE_URL=...
+AUTH_SECRET=...
 ```
 
 Use the Neon Postgres connection string with `sslmode=verify-full`.
+Use a long random `AUTH_SECRET` so login sessions stay signed across deployments.
 
 The app stores users, candidates, audit events, interview notes, round scores, and uploaded resume PDFs in Postgres. If you point Vercel at a fresh database, run `npm run db:init` once from a local machine with `DATABASE_URL` set before deploying.
 

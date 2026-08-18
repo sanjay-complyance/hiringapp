@@ -52,7 +52,8 @@ function defaultWorkflow(): CandidateWorkflow {
     ownerUserId: "",
     notes: "",
     roundScores: {},
-    roundNotes: {}
+    roundNotes: {},
+    activity: []
   };
 }
 
@@ -123,7 +124,7 @@ function workflowsFor(candidates: Candidate[]) {
   return Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.workflow ?? defaultWorkflow()]));
 }
 
-export function HiringWorkspace({ data }: { data: EvaluationData }) {
+export function HiringWorkspace({ data, initialUser = null }: { data: EvaluationData; initialUser?: User | null }) {
   const [liveData, setLiveData] = useState(data);
   const users = liveData.users ?? [];
   const [query, setQuery] = useState("");
@@ -131,7 +132,7 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
   const [bandMode, setBandMode] = useState<BandMode>("all");
   const [selectedId, setSelectedId] = useState(liveData.candidates[0]?.id ?? "");
   const [tab, setTab] = useState<Tab>("overview");
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(initialUser);
   const [workflow, setWorkflow] = useState<Record<string, CandidateWorkflow>>(() => workflowsFor(liveData.candidates));
   const [syncVersion, setSyncVersion] = useState(liveData.syncVersion ?? 0);
   const [syncState, setSyncState] = useState<SyncState>("live");
@@ -146,15 +147,27 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
   }
 
   useEffect(() => {
-    const savedEmail = window.localStorage.getItem("hiringUserEmail");
-    if (!savedEmail) return;
-    const savedUser = users.find((user) => user.email.toLowerCase() === savedEmail.toLowerCase());
-    if (savedUser) setCurrentUser(savedUser);
-  }, [users]);
+    if (currentUser) return;
+    let stopped = false;
 
-  useEffect(() => {
-    applyLiveData(data);
-  }, [data]);
+    async function restoreSession() {
+      try {
+        const response = await fetch("/api/session", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = (await response.json()) as { user: User; data?: EvaluationData };
+        if (stopped) return;
+        if (payload.data) applyLiveData(payload.data);
+        setCurrentUser(payload.user);
+      } catch {
+        // Stay on the login screen.
+      }
+    }
+
+    void restoreSession();
+    return () => {
+      stopped = true;
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -238,6 +251,19 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
     });
   }, [liveData.candidates, sortMode, bandMode, query]);
 
+  if (!currentUser) {
+    return (
+      <LoginScreen
+        data={liveData}
+        users={users}
+        onLogin={(user, nextData) => {
+          if (nextData) applyLiveData(nextData);
+          setCurrentUser(user);
+        }}
+      />
+    );
+  }
+
   const selected = liveData.candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? liveData.candidates[0];
   const selectedWorkflow = workflow[selected.id] ?? defaultWorkflow();
   const selectedIndex = candidates.findIndex((candidate) => candidate.id === selected.id);
@@ -260,7 +286,7 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
     const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body, actorUserId: currentUserId })
+      body: JSON.stringify(body)
     });
     if (!response.ok) throw new Error(`Failed to save ${path}`);
   }
@@ -318,10 +344,6 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
     void persist(`/api/candidates/${selected.id}/round-note`, { roundId, note });
   }
 
-  if (!currentUser) {
-    return <LoginScreen data={liveData} users={users} onLogin={setCurrentUser} />;
-  }
-
   return (
     <main className="workspace">
       <header className="appHeader">
@@ -341,7 +363,7 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
           syncState={syncState}
           onRefresh={refreshWorkspace}
           onLogout={() => {
-            window.localStorage.removeItem("hiringUserEmail");
+            void fetch("/api/session", { method: "DELETE" });
             setCurrentUser(null);
           }}
         />
@@ -369,8 +391,8 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
                 <option value="name">Name A-Z</option>
               </select>
             </label>
-            <AddUserForm currentUserId={currentUserId} onSaved={refreshWorkspace} />
-            <UploadResumeForm currentUserId={currentUserId} onSaved={refreshWorkspace} />
+            <AddUserForm onSaved={refreshWorkspace} />
+            <UploadResumeForm onSaved={refreshWorkspace} />
           </div>
 
           <div className="candidateList" aria-label="Candidates">
@@ -378,6 +400,8 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
               <button
                 key={candidate.id}
                 className={candidate.id === selected.id ? "candidateRow selected" : "candidateRow"}
+                data-testid="candidate-row"
+                data-candidate-id={candidate.id}
                 onClick={() => setSelectedId(candidate.id)}
               >
                 <span className="rank">#{candidate.rank}</span>
@@ -438,7 +462,7 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
   );
 }
 
-function LoginScreen({ data, users, onLogin }: { data: EvaluationData; users: User[]; onLogin: (user: User) => void }) {
+function LoginScreen({ data, users, onLogin }: { data: EvaluationData; users: User[]; onLogin: (user: User, nextData?: EvaluationData) => void }) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -452,14 +476,13 @@ function LoginScreen({ data, users, onLogin }: { data: EvaluationData; users: Us
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email })
     });
-    const payload = await response.json();
+    const payload = (await response.json()) as { user?: User; data?: EvaluationData; error?: string };
     setSaving(false);
     if (!response.ok) {
       setError(payload.error ?? "Login failed");
       return;
     }
-    window.localStorage.setItem("hiringUserEmail", payload.user.email);
-    onLogin(payload.user);
+    if (payload.user) onLogin(payload.user, payload.data);
   }
 
   return (
@@ -476,6 +499,7 @@ function LoginScreen({ data, users, onLogin }: { data: EvaluationData; users: Us
             <input
               value={email}
               onChange={(event) => setEmail(event.target.value)}
+              data-testid="login-email"
               type="email"
               placeholder="name@complyance.io"
               autoFocus
@@ -488,8 +512,8 @@ function LoginScreen({ data, users, onLogin }: { data: EvaluationData; users: Us
           </button>
         </form>
         <div className="loginMeta">
-          <Stat label="Candidates" value={data.candidates.length.toString()} />
-          <Stat label="Users" value={users.length.toString()} />
+          <Stat label="Candidates" value={(data.publicStats?.candidates ?? data.candidates.length).toString()} />
+          <Stat label="Users" value={(data.publicStats?.users ?? users.length).toString()} />
         </div>
       </section>
     </main>
@@ -544,7 +568,7 @@ function BucketButton({ active, label, count, onClick }: { active: boolean; labe
   );
 }
 
-function AddUserForm({ currentUserId, onSaved }: { currentUserId: string; onSaved: () => void }) {
+function AddUserForm({ onSaved }: { onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -555,7 +579,7 @@ function AddUserForm({ currentUserId, onSaved }: { currentUserId: string; onSave
     const response = await fetch("/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, name, role, actorUserId: currentUserId })
+      body: JSON.stringify({ email, name, role })
     });
     if (!response.ok) return;
     setEmail("");
@@ -578,14 +602,13 @@ function AddUserForm({ currentUserId, onSaved }: { currentUserId: string; onSave
   );
 }
 
-function UploadResumeForm({ currentUserId, onSaved }: { currentUserId: string; onSaved: () => void }) {
+function UploadResumeForm({ onSaved }: { onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    form.set("actorUserId", currentUserId);
     if (name) form.set("name", name);
     const response = await fetch("/api/upload-resume", { method: "POST", body: form });
     if (!response.ok) return;
@@ -662,7 +685,7 @@ function CandidateHero({
         </div>
         <label>
           <span>Status</span>
-          <select value={workflow.status} onChange={(event) => onStatus(event.target.value as CandidateWorkflow["status"])}>
+          <select data-testid="status-select" value={workflow.status} onChange={(event) => onStatus(event.target.value as CandidateWorkflow["status"])}>
             {Object.entries(statusLabels).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
@@ -672,7 +695,7 @@ function CandidateHero({
         </label>
         <label>
           <span>Owner</span>
-          <select value={workflow.ownerUserId} onChange={(event) => onOwner(event.target.value)}>
+          <select data-testid="owner-select" value={workflow.ownerUserId} onChange={(event) => onOwner(event.target.value)}>
             <option value="">Unassigned</option>
             {users.map((user) => (
               <option key={user.id} value={user.id}>
@@ -728,9 +751,45 @@ function Overview({
             Save note
           </button>
         </div>
+        <ActivityTimeline workflow={workflow} />
       </aside>
     </div>
   );
+}
+
+function ActivityTimeline({ workflow }: { workflow: CandidateWorkflow }) {
+  const activity = workflow.activity.slice(0, 12);
+  return (
+    <div className="panel activityPanel">
+      <h3>Activity</h3>
+      {activity.length === 0 ? (
+        <p className="muted">No recorded actions yet.</p>
+      ) : (
+        <ol>
+          {activity.map((item) => (
+            <li key={`${item.type}-${item.id}`}>
+              <div>
+                <strong>{activityLabel(item)}</strong>
+                <span>{item.actorName ?? item.actorEmail ?? "System"}</span>
+              </div>
+              {item.body && <p>{item.body}</p>}
+              <time>{new Date(item.createdAt).toLocaleString()}</time>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function activityLabel(item: CandidateWorkflow["activity"][number]) {
+  if (item.type === "note") return "Added note";
+  if (item.action === "change_status") return `Status ${statusLabels[item.fromStatus as CandidateWorkflow["status"]] ?? item.fromStatus ?? ""} -> ${statusLabels[item.toStatus as CandidateWorkflow["status"]] ?? item.toStatus ?? ""}`;
+  if (item.action === "assign_owner") return "Changed owner";
+  if (item.action === "update_round_score") return "Updated scorecard";
+  if (item.action === "update_round_note") return "Updated round note";
+  if (item.action === "upload_resume") return "Uploaded resume";
+  return item.action?.replaceAll("_", " ") ?? "Updated";
 }
 
 function ActionBanner({ candidate }: { candidate: Candidate }) {

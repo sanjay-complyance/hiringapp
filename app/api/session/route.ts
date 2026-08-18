@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { auditEvent, jsonError } from "@/lib/api-utils";
+import { clearSessionCookie, createSessionToken, getSessionUser, setSessionCookie } from "@/lib/auth";
+import { auditEvent, jsonError, jsonFromError } from "@/lib/api-utils";
+import { getAppData } from "@/lib/app-data";
 import { query } from "@/lib/db";
 import type { User } from "@/lib/types";
 
@@ -39,8 +41,28 @@ export async function POST(request: Request) {
       payload: { email: user.email }
     });
 
-    return NextResponse.json({ user });
+    const data = await getAppData();
+    const response = NextResponse.json({ user, data });
+    setSessionCookie(response, createSessionToken(user));
+    return response;
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Unable to log in", 500);
+    return jsonFromError(error, "Unable to log in");
   }
+}
+
+export async function GET(request: Request) {
+  try {
+    const user = await getSessionUser(request);
+    if (!user) return jsonError("Login is required", 401);
+    const data = await getAppData();
+    return NextResponse.json({ user, data }, { headers: { "Cache-Control": "no-store, max-age=0" } });
+  } catch (error) {
+    return jsonFromError(error, "Unable to read session");
+  }
+}
+
+export async function DELETE() {
+  const response = NextResponse.json({ ok: true });
+  clearSessionCookie(response);
+  return response;
 }

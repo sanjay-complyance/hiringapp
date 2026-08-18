@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import { auditEvent, getCandidateId, jsonError, requireActor, statuses } from "@/lib/api-utils";
+import { auditEvent, getCandidateId, jsonError, jsonFromError, requireActor, statuses } from "@/lib/api-utils";
 import { query } from "@/lib/db";
 import type { CandidateWorkflow } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 type StatusPayload = {
-  actorUserId?: string;
   status?: CandidateWorkflow["status"];
   fromStatus?: CandidateWorkflow["status"];
 };
@@ -15,7 +14,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const id = await getCandidateId(context);
     const body = (await request.json()) as StatusPayload;
-    const actorUserId = await requireActor(body.actorUserId);
+    const actorUserId = await requireActor(request);
     const status = body.status;
 
     if (!status || !statuses.has(status)) {
@@ -37,6 +36,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     return NextResponse.json({ ok: true, status });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Unable to update candidate status", 500);
+    return jsonFromError(error, "Unable to update candidate status");
   }
 }

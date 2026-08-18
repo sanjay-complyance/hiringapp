@@ -757,6 +757,45 @@ textarea {
   padding: 14px;
 }
 
+.activityPanel ol {
+  display: grid;
+  gap: 10px;
+  max-height: 360px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activityPanel li {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.activityPanel li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.activityPanel strong {
+  color: #263340;
+  font-size: 13px;
+}
+
+.activityPanel span,
+.activityPanel time,
+.activityPanel p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.activityPanel p {
+  margin: 5px 0;
+}
+
 .sectionHeading,
 .roundSection header,
 .pdfPanel header,

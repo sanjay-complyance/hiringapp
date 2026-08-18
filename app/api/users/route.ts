@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { auditEvent, jsonError, requireActor } from "@/lib/api-utils";
+import { requireSessionUser } from "@/lib/auth";
+import { auditEvent, canManageUsers, jsonError, jsonFromError } from "@/lib/api-utils";
 import { query } from "@/lib/db";
 
 export const runtime = "nodejs";
 
 type UserPayload = {
-  actorUserId?: string;
   email?: string;
   name?: string;
   role?: string;
@@ -14,13 +14,18 @@ type UserPayload = {
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as UserPayload;
-    const actorUserId = await requireActor(body.actorUserId);
+    const actor = await requireSessionUser(request);
+    if (!canManageUsers(actor)) return jsonError("You do not have permission to manage users", 403);
+    const actorUserId = actor.id;
     const email = body.email?.trim().toLowerCase();
     const name = body.name?.trim();
     const role = body.role?.trim() || "Reviewer";
 
     if (!email || !name || !email.includes("@")) {
       return jsonError("Valid name and email are required");
+    }
+    if (email.length > 254 || name.length > 120 || role.length > 80) {
+      return jsonError("Name, email, or role is too long");
     }
 
     const result = await query<{ id: string; email: string; name: string; role: string; active: boolean }>(
@@ -42,6 +47,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ user: result.rows[0] });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Unable to save user", 500);
+    return jsonFromError(error, "Unable to save user");
   }
 }

@@ -74,6 +74,10 @@ export type EvaluationData = {
   candidates: Candidate[];
   users?: User[];
   syncVersion?: number;
+  publicStats?: {
+    candidates: number;
+    users: number;
+  };
 };
 
 export type User = {
@@ -90,4 +94,17 @@ export type CandidateWorkflow = {
   notes: string;
   roundScores: Record<string, Record<string, number>>;
   roundNotes: Record<string, string>;
+  activity: CandidateActivity[];
+};
+
+export type CandidateActivity = {
+  id: string;
+  type: "note" | "audit";
+  action: string | null;
+  body: string | null;
+  actorName: string | null;
+  actorEmail: string | null;
+  fromStatus: string | null;
+  toStatus: string | null;
+  createdAt: string;
 };

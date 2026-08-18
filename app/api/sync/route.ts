@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { jsonError } from "@/lib/api-utils";
+import { jsonFromError } from "@/lib/api-utils";
+import { requireSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { getAppData } from "@/lib/app-data";
 
@@ -7,6 +8,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
+    await requireSessionUser(request);
     const url = new URL(request.url);
     const since = Number(url.searchParams.get("since") ?? 0);
     const includeData = url.searchParams.get("includeData") === "1";
@@ -29,6 +31,6 @@ export async function GET(request: Request) {
       changed
     }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Unable to check sync state", 500);
+    return jsonFromError(error, "Unable to check sync state");
   }
 }

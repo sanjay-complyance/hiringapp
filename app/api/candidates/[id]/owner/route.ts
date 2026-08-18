@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { auditEvent, getCandidateId, jsonError, requireActor } from "@/lib/api-utils";
+import { auditEvent, getCandidateId, jsonError, jsonFromError, requireActor } from "@/lib/api-utils";
 import { query, requireUser } from "@/lib/db";
 
 export const runtime = "nodejs";
 
 type OwnerPayload = {
-  actorUserId?: string;
   ownerUserId?: string;
 };
 
@@ -13,8 +12,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const id = await getCandidateId(context);
     const body = (await request.json()) as OwnerPayload;
-    const actorUserId = await requireActor(body.actorUserId);
+    const actorUserId = await requireActor(request);
     const ownerUserId = body.ownerUserId?.trim() || null;
+    if (ownerUserId && ownerUserId.length > 80) return jsonError("Invalid owner");
 
     if (ownerUserId) await requireUser(ownerUserId);
 
@@ -30,6 +30,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     return NextResponse.json({ ok: true, ownerUserId });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Unable to update candidate owner", 500);
+    return jsonFromError(error, "Unable to update candidate owner");
   }
 }

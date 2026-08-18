@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { auditEvent, getCandidateId, jsonError, requireActor } from "@/lib/api-utils";
+import { auditEvent, getCandidateId, jsonError, jsonFromError, requireActor } from "@/lib/api-utils";
 import { query } from "@/lib/db";
 
 export const runtime = "nodejs";
 
 type RoundNotePayload = {
-  actorUserId?: string;
   roundId?: string;
   note?: string;
 };
@@ -14,11 +13,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const id = await getCandidateId(context);
     const body = (await request.json()) as RoundNotePayload;
-    const actorUserId = await requireActor(body.actorUserId);
+    const actorUserId = await requireActor(request);
     const roundId = body.roundId?.trim();
     const note = body.note ?? "";
 
     if (!roundId) return jsonError("roundId is required");
+    if (roundId.length > 80 || note.length > 5000) return jsonError("Round note input is too long");
 
     await query(
       `
@@ -38,6 +38,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Unable to save round note", 500);
+    return jsonFromError(error, "Unable to save round note");
   }
 }

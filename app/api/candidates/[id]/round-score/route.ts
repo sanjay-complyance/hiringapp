@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { auditEvent, getCandidateId, jsonError, requireActor } from "@/lib/api-utils";
+import { auditEvent, getCandidateId, jsonError, jsonFromError, requireActor } from "@/lib/api-utils";
 import { query } from "@/lib/db";
 
 export const runtime = "nodejs";
 
 type ScorePayload = {
-  actorUserId?: string;
   roundId?: string;
   areaId?: string;
   score?: number;
@@ -15,13 +14,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const id = await getCandidateId(context);
     const body = (await request.json()) as ScorePayload;
-    const actorUserId = await requireActor(body.actorUserId);
+    const actorUserId = await requireActor(request);
     const roundId = body.roundId?.trim();
     const areaId = body.areaId?.trim();
     const score = Number(body.score);
 
     if (!roundId || !areaId || !Number.isFinite(score) || score < 0) {
       return jsonError("Valid roundId, areaId, and score are required");
+    }
+    if (roundId.length > 80 || areaId.length > 120 || score > 100) {
+      return jsonError("Round score input is out of range");
     }
 
     await query(
@@ -42,6 +44,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Unable to save round score", 500);
+    return jsonFromError(error, "Unable to save round score");
   }
 }

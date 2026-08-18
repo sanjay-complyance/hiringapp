@@ -5,13 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { NextResponse } from "next/server";
-import { auditEvent, jsonError, requireActor } from "@/lib/api-utils";
+import { auditEvent, jsonError, jsonFromError, requireActor } from "@/lib/api-utils";
 import { query } from "@/lib/db";
 import type { Candidate, MetricId } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 const execFileAsync = promisify(execFile);
+const maxResumeSizeBytes = 8 * 1024 * 1024;
 
 type MetricRule = {
   id: MetricId;
@@ -173,18 +174,31 @@ async function extractPdfText(filePath: string) {
   }
 }
 
+async function extractPortablePdfText(pdfBytes: Buffer) {
+  try {
+    const pdfParse = (await import("pdf-parse")).default;
+    const parsed = await pdfParse(pdfBytes);
+    return parsed.text ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
-    const actorUserId = await requireActor(form.get("actorUserId"));
+    const actorUserId = await requireActor(request);
     const resume = form.get("resume");
 
     if (!(resume instanceof File) || resume.size === 0) {
       return jsonError("A PDF resume is required");
     }
+    if (resume.size > maxResumeSizeBytes) {
+      return jsonError("Resume must be 8MB or smaller");
+    }
 
     const originalName = safeFileName(resume.name || "resume.pdf");
-    if (!originalName.toLowerCase().endsWith(".pdf")) {
+    if (!originalName.toLowerCase().endsWith(".pdf") || !["", "application/pdf"].includes(resume.type)) {
       return jsonError("Only PDF resumes are supported");
     }
 
@@ -194,8 +208,9 @@ export async function POST(request: Request) {
     const pdfBytes = Buffer.from(await resume.arrayBuffer());
     await writeFile(filePath, pdfBytes);
 
-    const text = await extractPdfText(filePath);
+    const text = (await extractPdfText(filePath)) || (await extractPortablePdfText(pdfBytes));
     const name = inferName(text, originalName, form.get("name"));
+    if (name.length > 160) return jsonError("Candidate name is too long");
     const stage0 = strictStage0(text);
     const candidateId = `uploaded-${slug(name)}-${randomUUID().slice(0, 8)}`;
     const firstLines = text
@@ -250,6 +265,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ candidateId, name, stage0 });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : "Unable to upload resume", 500);
+    return jsonFromError(error, "Unable to upload resume");
   }
 }
