@@ -73,6 +73,7 @@ export type EvaluationData = {
   round_scorecards: Record<string, RoundScorecard>;
   candidates: Candidate[];
   users?: User[];
+  syncVersion?: number;
 };
 
 export type User = {

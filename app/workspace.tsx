@@ -11,10 +11,12 @@ import {
   Filter,
   ListChecks,
   LogOut,
+  RefreshCw,
   Search,
   ShieldCheck,
   XCircle
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { Candidate, CandidateWorkflow, EvaluationData, MetricId, RoundScorecard, User } from "@/lib/types";
@@ -22,6 +24,7 @@ import type { Candidate, CandidateWorkflow, EvaluationData, MetricId, RoundScore
 type SortMode = "rank" | "score" | "name" | "years";
 type BandMode = "all" | "advance" | "manual" | "near" | "reject";
 type Tab = "overview" | "scorecards" | "pdf" | "process";
+type SyncState = "live" | "checking" | "syncing" | "offline";
 
 const metricOrder: MetricId[] = [
   "full_stack_production",
@@ -117,7 +120,12 @@ function skillsFor(candidate: Candidate) {
     .slice(0, 18);
 }
 
+function workflowsFor(candidates: Candidate[]) {
+  return Object.fromEntries(candidates.map((candidate) => [candidate.id, candidate.workflow ?? defaultWorkflow()]));
+}
+
 export function HiringWorkspace({ data }: { data: EvaluationData }) {
+  const router = useRouter();
   const users = data.users ?? [];
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("rank");
@@ -125,9 +133,9 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
   const [selectedId, setSelectedId] = useState(data.candidates[0]?.id ?? "");
   const [tab, setTab] = useState<Tab>("overview");
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [workflow, setWorkflow] = useState<Record<string, CandidateWorkflow>>(() =>
-    Object.fromEntries(data.candidates.map((candidate) => [candidate.id, candidate.workflow ?? defaultWorkflow()]))
-  );
+  const [workflow, setWorkflow] = useState<Record<string, CandidateWorkflow>>(() => workflowsFor(data.candidates));
+  const [syncVersion, setSyncVersion] = useState(data.syncVersion ?? 0);
+  const [syncState, setSyncState] = useState<SyncState>("live");
   const currentUserId = currentUser?.id ?? "";
 
   useEffect(() => {
@@ -136,6 +144,52 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
     const savedUser = users.find((user) => user.email.toLowerCase() === savedEmail.toLowerCase());
     if (savedUser) setCurrentUser(savedUser);
   }, [users]);
+
+  useEffect(() => {
+    setWorkflow(workflowsFor(data.candidates));
+    setSelectedId((current) => (data.candidates.some((candidate) => candidate.id === current) ? current : data.candidates[0]?.id ?? ""));
+    setSyncVersion(data.syncVersion ?? 0);
+    setSyncState("live");
+  }, [data.candidates, data.syncVersion]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    let stopped = false;
+    let inFlight = false;
+
+    async function checkForChanges() {
+      if (inFlight || stopped) return;
+      inFlight = true;
+      setSyncState((state) => (state === "syncing" ? state : "checking"));
+      try {
+        const response = await fetch(`/api/sync?since=${syncVersion}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Sync check failed");
+        const payload = (await response.json()) as { version: number; changed: boolean };
+        if (stopped) return;
+        if (payload.changed) {
+          setSyncState("syncing");
+          router.refresh();
+        } else {
+          setSyncState("live");
+        }
+      } catch {
+        if (!stopped) setSyncState("offline");
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    const interval = window.setInterval(checkForChanges, 4000);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [currentUserId, router, syncVersion]);
+
+  function refreshWorkspace() {
+    setSyncState("syncing");
+    router.refresh();
+  }
 
   const stats = useMemo(() => {
     const buckets = { advance: 0, manual: 0, near: 0, reject: 0 };
@@ -263,10 +317,15 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
           <Stat label="Manual" value={stats.manual.toString()} tone="warn" />
           <Stat label="Reject" value={(stats.near + stats.reject).toString()} tone="bad" />
         </div>
-        <UserBadge user={currentUser} onLogout={() => {
-          window.localStorage.removeItem("hiringUserEmail");
-          setCurrentUser(null);
-        }} />
+        <UserBadge
+          user={currentUser}
+          syncState={syncState}
+          onRefresh={refreshWorkspace}
+          onLogout={() => {
+            window.localStorage.removeItem("hiringUserEmail");
+            setCurrentUser(null);
+          }}
+        />
       </header>
 
       <section className="reviewShell">
@@ -291,8 +350,8 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
                 <option value="name">Name A-Z</option>
               </select>
             </label>
-            <AddUserForm currentUserId={currentUserId} />
-            <UploadResumeForm currentUserId={currentUserId} />
+            <AddUserForm currentUserId={currentUserId} onSaved={refreshWorkspace} />
+            <UploadResumeForm currentUserId={currentUserId} onSaved={refreshWorkspace} />
           </div>
 
           <div className="candidateList" aria-label="Candidates">
@@ -418,14 +477,29 @@ function LoginScreen({ data, users, onLogin }: { data: EvaluationData; users: Us
   );
 }
 
-function UserBadge({ user, onLogout }: { user: User; onLogout: () => void }) {
+function UserBadge({
+  user,
+  syncState,
+  onRefresh,
+  onLogout
+}: {
+  user: User;
+  syncState: SyncState;
+  onRefresh: () => void;
+  onLogout: () => void;
+}) {
+  const syncLabel = syncState === "syncing" ? "Updating" : syncState === "checking" ? "Checking" : syncState === "offline" ? "Offline" : "Live";
   return (
     <div className="userBadge">
       <div>
         <span>Logged in</span>
         <strong>{user.name}</strong>
         <small>{user.email}</small>
+        <small className={`syncText ${syncState}`}>{syncLabel}</small>
       </div>
+      <button onClick={onRefresh} title="Refresh now">
+        <RefreshCw size={16} />
+      </button>
       <button onClick={onLogout} title="Log out">
         <LogOut size={16} />
       </button>
@@ -451,7 +525,7 @@ function BucketButton({ active, label, count, onClick }: { active: boolean; labe
   );
 }
 
-function AddUserForm({ currentUserId }: { currentUserId: string }) {
+function AddUserForm({ currentUserId, onSaved }: { currentUserId: string; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -465,7 +539,11 @@ function AddUserForm({ currentUserId }: { currentUserId: string }) {
       body: JSON.stringify({ email, name, role, actorUserId: currentUserId })
     });
     if (!response.ok) return;
-    window.location.reload();
+    setEmail("");
+    setName("");
+    setRole("Reviewer");
+    setOpen(false);
+    onSaved();
   }
 
   return (
@@ -481,7 +559,7 @@ function AddUserForm({ currentUserId }: { currentUserId: string }) {
   );
 }
 
-function UploadResumeForm({ currentUserId }: { currentUserId: string }) {
+function UploadResumeForm({ currentUserId, onSaved }: { currentUserId: string; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
 
@@ -492,7 +570,10 @@ function UploadResumeForm({ currentUserId }: { currentUserId: string }) {
     if (name) form.set("name", name);
     const response = await fetch("/api/upload-resume", { method: "POST", body: form });
     if (!response.ok) return;
-    window.location.reload();
+    setName("");
+    event.currentTarget.reset();
+    setOpen(false);
+    onSaved();
   }
 
   return (

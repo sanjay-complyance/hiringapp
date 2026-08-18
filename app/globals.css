@@ -235,7 +235,7 @@ h4 {
 .userBadge {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: minmax(0, 1fr) 38px 38px;
   gap: 8px;
   align-items: center;
   border: 1px solid var(--border);
@@ -265,6 +265,21 @@ h4 {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 650;
+}
+
+.userBadge .syncText {
+  margin-top: 2px;
+  color: var(--good);
+  font-weight: 800;
+}
+
+.userBadge .syncText.checking,
+.userBadge .syncText.syncing {
+  color: var(--accent);
+}
+
+.userBadge .syncText.offline {
+  color: var(--bad);
 }
 
 .userBadge button {

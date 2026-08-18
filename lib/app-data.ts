@@ -73,7 +73,7 @@ function mapCandidate(row: CandidateRow, rank: number, workflow: CandidateWorkfl
 }
 
 export async function getAppData(): Promise<EvaluationData> {
-  const [userResult, candidateResult, scoreResult, roundNoteResult, noteResult] = await Promise.all([
+  const [userResult, candidateResult, scoreResult, roundNoteResult, noteResult, syncResult] = await Promise.all([
     query<User>("select id, email, name, role, active from app_users where active = true order by created_at asc"),
     query<CandidateRow>(`
       select id, name, file_name, source_path, stage0_score, stage0_band, stage0, profile, status, owner_user_id
@@ -86,7 +86,8 @@ export async function getAppData(): Promise<EvaluationData> {
       select distinct on (candidate_id) candidate_id, body
       from candidate_notes
       order by candidate_id, created_at desc
-    `)
+    `),
+    query<{ version: number }>("select coalesce(max(id), 0)::int as version from audit_events where action <> 'login'")
   ]);
 
   const workflows = new Map<string, CandidateWorkflow>();
@@ -121,6 +122,7 @@ export async function getAppData(): Promise<EvaluationData> {
   return {
     ...(staticData as unknown as EvaluationData),
     users: userResult.rows,
+    syncVersion: syncResult.rows[0]?.version ?? 0,
     candidates: candidateResult.rows.map((row, index) => mapCandidate(row, index + 1, workflows.get(row.id) ?? {
       status: "new",
       ownerUserId: "",
