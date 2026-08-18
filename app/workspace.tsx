@@ -16,7 +16,6 @@ import {
   ShieldCheck,
   XCircle
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { Candidate, CandidateWorkflow, EvaluationData, MetricId, RoundScorecard, User } from "@/lib/types";
@@ -125,18 +124,26 @@ function workflowsFor(candidates: Candidate[]) {
 }
 
 export function HiringWorkspace({ data }: { data: EvaluationData }) {
-  const router = useRouter();
-  const users = data.users ?? [];
+  const [liveData, setLiveData] = useState(data);
+  const users = liveData.users ?? [];
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("rank");
   const [bandMode, setBandMode] = useState<BandMode>("all");
-  const [selectedId, setSelectedId] = useState(data.candidates[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState(liveData.candidates[0]?.id ?? "");
   const [tab, setTab] = useState<Tab>("overview");
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [workflow, setWorkflow] = useState<Record<string, CandidateWorkflow>>(() => workflowsFor(data.candidates));
-  const [syncVersion, setSyncVersion] = useState(data.syncVersion ?? 0);
+  const [workflow, setWorkflow] = useState<Record<string, CandidateWorkflow>>(() => workflowsFor(liveData.candidates));
+  const [syncVersion, setSyncVersion] = useState(liveData.syncVersion ?? 0);
   const [syncState, setSyncState] = useState<SyncState>("live");
   const currentUserId = currentUser?.id ?? "";
+
+  function applyLiveData(nextData: EvaluationData) {
+    setLiveData(nextData);
+    setWorkflow(workflowsFor(nextData.candidates));
+    setSelectedId((current) => (nextData.candidates.some((candidate) => candidate.id === current) ? current : nextData.candidates[0]?.id ?? ""));
+    setSyncVersion(nextData.syncVersion ?? 0);
+    setSyncState("live");
+  }
 
   useEffect(() => {
     const savedEmail = window.localStorage.getItem("hiringUserEmail");
@@ -146,11 +153,8 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
   }, [users]);
 
   useEffect(() => {
-    setWorkflow(workflowsFor(data.candidates));
-    setSelectedId((current) => (data.candidates.some((candidate) => candidate.id === current) ? current : data.candidates[0]?.id ?? ""));
-    setSyncVersion(data.syncVersion ?? 0);
-    setSyncState("live");
-  }, [data.candidates, data.syncVersion]);
+    applyLiveData(data);
+  }, [data]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -162,14 +166,17 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
       inFlight = true;
       setSyncState((state) => (state === "syncing" ? state : "checking"));
       try {
-        const response = await fetch(`/api/sync?since=${syncVersion}`, { cache: "no-store" });
+        const response = await fetch(`/api/sync?since=${syncVersion}&includeData=1`, { cache: "no-store" });
         if (!response.ok) throw new Error("Sync check failed");
-        const payload = (await response.json()) as { version: number; changed: boolean };
+        const payload = (await response.json()) as { version: number; changed: boolean; data?: EvaluationData };
         if (stopped) return;
-        if (payload.changed) {
-          setSyncState("syncing");
-          router.refresh();
+        if (payload.changed && payload.data) {
+          applyLiveData(payload.data);
+        } else if (payload.changed) {
+          setSyncVersion(payload.version);
+          setSyncState("live");
         } else {
+          setSyncVersion(payload.version);
           setSyncState("live");
         }
       } catch {
@@ -184,24 +191,36 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
       stopped = true;
       window.clearInterval(interval);
     };
-  }, [currentUserId, router, syncVersion]);
+  }, [currentUserId, syncVersion]);
 
-  function refreshWorkspace() {
+  async function refreshWorkspace() {
     setSyncState("syncing");
-    router.refresh();
+    try {
+      const response = await fetch(`/api/sync?since=-1&includeData=1`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Refresh failed");
+      const payload = (await response.json()) as { data?: EvaluationData; version: number };
+      if (payload.data) {
+        applyLiveData(payload.data);
+      } else {
+        setSyncVersion(payload.version);
+        setSyncState("live");
+      }
+    } catch {
+      setSyncState("offline");
+    }
   }
 
   const stats = useMemo(() => {
     const buckets = { advance: 0, manual: 0, near: 0, reject: 0 };
-    data.candidates.forEach((candidate) => {
+    liveData.candidates.forEach((candidate) => {
       buckets[actionFor(candidate) as keyof typeof buckets] += 1;
     });
     return buckets;
-  }, [data.candidates]);
+  }, [liveData.candidates]);
 
   const candidates = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return sortedCandidates(data.candidates, sortMode).filter((candidate) => {
+    return sortedCandidates(liveData.candidates, sortMode).filter((candidate) => {
       const action = actionFor(candidate);
       if (bandMode === "reject" && action !== "reject" && action !== "near") return false;
       if (bandMode !== "all" && bandMode !== "reject" && bandMode !== action) return false;
@@ -217,9 +236,9 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [data.candidates, sortMode, bandMode, query]);
+  }, [liveData.candidates, sortMode, bandMode, query]);
 
-  const selected = data.candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? data.candidates[0];
+  const selected = liveData.candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? liveData.candidates[0];
   const selectedWorkflow = workflow[selected.id] ?? defaultWorkflow();
   const selectedIndex = candidates.findIndex((candidate) => candidate.id === selected.id);
   const previousCandidate = candidates[selectedIndex - 1];
@@ -300,7 +319,7 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
   }
 
   if (!currentUser) {
-    return <LoginScreen data={data} users={users} onLogin={setCurrentUser} />;
+    return <LoginScreen data={liveData} users={users} onLogin={setCurrentUser} />;
   }
 
   return (
@@ -312,7 +331,7 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
           <p>Strict resume screen, evidence view, PDF review, and interview scorecards in one place.</p>
         </div>
         <div className="summaryTiles" aria-label="Strict resume screen summary">
-          <Stat label="Reviewed" value={data.candidates.length.toString()} />
+          <Stat label="Reviewed" value={liveData.candidates.length.toString()} />
           <Stat label="Advance" value={stats.advance.toString()} tone="good" />
           <Stat label="Manual" value={stats.manual.toString()} tone="warn" />
           <Stat label="Reject" value={(stats.near + stats.reject).toString()} tone="bad" />
@@ -336,7 +355,7 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, tech, file" />
             </label>
             <div className="bucketTabs" aria-label="Candidate buckets">
-              <BucketButton active={bandMode === "all"} label="All" count={data.candidates.length} onClick={() => setBandMode("all")} />
+              <BucketButton active={bandMode === "all"} label="All" count={liveData.candidates.length} onClick={() => setBandMode("all")} />
               <BucketButton active={bandMode === "advance"} label="Advance" count={stats.advance} onClick={() => setBandMode("advance")} />
               <BucketButton active={bandMode === "manual"} label="Manual" count={stats.manual} onClick={() => setBandMode("manual")} />
               <BucketButton active={bandMode === "reject"} label="Reject" count={stats.near + stats.reject} onClick={() => setBandMode("reject")} />
@@ -396,7 +415,7 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
           {tab === "overview" && (
             <Overview
               candidate={selected}
-              data={data}
+              data={liveData}
               workflow={selectedWorkflow}
               onNotes={(notes) => updateWorkflow({ notes })}
               onSaveNotes={saveCandidateNote}
@@ -405,14 +424,14 @@ export function HiringWorkspace({ data }: { data: EvaluationData }) {
           {tab === "scorecards" && (
             <Scorecards
               candidate={selected}
-              data={data}
+              data={liveData}
               workflow={selectedWorkflow}
               onScore={updateRoundScore}
               onNote={updateRoundNote}
             />
           )}
           {tab === "pdf" && <PdfView candidate={selected} />}
-          {tab === "process" && <ProcessGuide data={data} candidate={selected} workflow={selectedWorkflow} />}
+          {tab === "process" && <ProcessGuide data={liveData} candidate={selected} workflow={selectedWorkflow} />}
         </section>
       </section>
     </main>
