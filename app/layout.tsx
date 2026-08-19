@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Senior Hiring Review",
-  description: "Resume ranking and hiring-process workspace for Senior Software Developer candidates."
+  title: { default: "Complyance Hiring", template: "%s · Complyance Hiring" },
+  description: "Hiring operations, structured interviews, and accountable decisions."
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
