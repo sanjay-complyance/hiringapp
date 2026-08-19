@@ -60,7 +60,7 @@ function defaultWorkflow(): CandidateWorkflow {
 }
 
 function actionFor(candidate: Candidate): BandMode {
-  if (isOverExperienceTarget(candidate)) return "reject";
+  if (isAtOrAboveExperienceLimit(candidate)) return "reject";
   if (!hasPreferredExperience(candidate)) return "verify";
   const score = candidate.stage0.score;
   const strictPass = candidate.stage0.pass_bar;
@@ -83,26 +83,25 @@ function hasPreferredExperience(candidate: Candidate) {
   return typeof candidate.years === "number" && candidate.years < 7;
 }
 
-function isOverExperienceTarget(candidate: Candidate) {
-  return typeof candidate.years === "number" && candidate.years > 7;
+function isAtOrAboveExperienceLimit(candidate: Candidate) {
+  return typeof candidate.years === "number" && candidate.years >= 7;
 }
 
 function experienceLabel(candidate: Candidate) {
   if (typeof candidate.years !== "number") return "Years unclear";
   if (candidate.years < 7) return "Under 7 fit";
-  if (candidate.years === 7) return "7 yrs - verify";
-  return "Over 7 yrs";
+  return "7+ yrs - not fit";
 }
 
 function screenLabel(candidate: Candidate) {
-  if (isOverExperienceTarget(candidate)) return "Over 7 yrs";
+  if (isAtOrAboveExperienceLimit(candidate)) return "7+ yrs";
   if (!hasPreferredExperience(candidate)) return "Verify exp";
   return actionLabel(actionFor(candidate));
 }
 
 function scoreClass(candidate: Candidate) {
   const score = candidate.stage0.score;
-  if (isOverExperienceTarget(candidate) || !hasPreferredExperience(candidate)) return "score reject";
+  if (isAtOrAboveExperienceLimit(candidate) || !hasPreferredExperience(candidate)) return "score reject";
   if (score >= 17) return "score strong";
   if (score >= 14) return "score pass";
   if (score >= 11) return "score borderline";
@@ -255,7 +254,7 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
     const buckets = { under7: 0, advance: 0, manual: 0, verify: 0, reject: 0, over7: 0 };
     liveData.candidates.forEach((candidate) => {
       if (hasPreferredExperience(candidate)) buckets.under7 += 1;
-      if (isOverExperienceTarget(candidate)) buckets.over7 += 1;
+      if (isAtOrAboveExperienceLimit(candidate)) buckets.over7 += 1;
       buckets[actionFor(candidate) as keyof typeof buckets] += 1;
     });
     return buckets;
@@ -828,8 +827,8 @@ function activityLabel(item: CandidateWorkflow["activity"][number]) {
 function ActionBanner({ candidate }: { candidate: Candidate }) {
   const action = actionFor(candidate);
   const icon = action === "advance" ? <CheckCircle2 size={18} /> : action === "reject" ? <XCircle size={18} /> : <AlertTriangle size={18} />;
-  const message = isOverExperienceTarget(candidate)
-    ? "Rejected by the new experience-fit rule. This search targets candidates under 7 years of experience."
+  const message = isAtOrAboveExperienceLimit(candidate)
+    ? "Rejected by the experience-fit rule. This search targets candidates under 7 years of experience."
     : !hasPreferredExperience(candidate)
       ? "Manual verification required before advancing. This search targets candidates under 7 years of experience."
       : "Resume-only strict screen. Use this to decide interview queue priority, then verify with Round 1-3 evidence.";

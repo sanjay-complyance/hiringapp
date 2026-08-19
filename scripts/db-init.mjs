@@ -23,8 +23,8 @@ const initialUsers = [
 ];
 
 function defaultStatus(candidate) {
-  if (typeof candidate.years === "number" && candidate.years > 7) return "no_hire";
-  if (candidate.years === null || candidate.years === 7) return "hold";
+  if (typeof candidate.years === "number" && candidate.years >= 7) return "no_hire";
+  if (candidate.years === null) return "hold";
   if (candidate.stage0.band === "Strict advance") return "round1";
   if (candidate.stage0.band === "Strict manual hold") return "hold";
   return "no_hire";

@@ -119,7 +119,10 @@ function extractContacts(text: string) {
 }
 
 function inferYears(text: string) {
-  const matches = [...text.matchAll(/(\d{1,2})(?:\.\d+)?\s*\+?\s*(?:years|yrs)\b/gi)]
+  const matches = [
+    ...text.matchAll(/(\d{1,2})(?:\.\d+)?\s*\+?\s*(?:years|yrs)\b/gi),
+    ...text.matchAll(/(\d{1,2})(?:\.\d+)?\s*\+?\s*(?:yoe)\b/gi)
+  ]
     .map((match) => Number(match[1]))
     .filter((value) => Number.isFinite(value) && value > 0 && value < 40);
   return matches.length > 0 ? Math.max(...matches) : null;
@@ -171,8 +174,8 @@ function strictStage0(text: string): Candidate["stage0"] {
 }
 
 function uploadedStatus(stage0: Candidate["stage0"], years: number | null): CandidateWorkflow["status"] {
-  if (typeof years === "number" && years > 7) return "no_hire";
-  if (years === null || years === 7) return "hold";
+  if (typeof years === "number" && years >= 7) return "no_hire";
+  if (years === null) return "hold";
   if (stage0.score >= stage0.pass_bar) return "round1";
   if (stage0.score >= (stage0.hiring_plan_pass_bar ?? 14)) return "hold";
   return "no_hire";

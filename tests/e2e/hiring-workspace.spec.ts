@@ -21,6 +21,21 @@ test("logs in and protects candidate data until authenticated", async ({ page })
   await login(page, "sanjay@complyance.io");
 });
 
+test("blocks advancing candidates at or above 7 years", async ({ request }) => {
+  const loginResponse = await request.post("/api/session", {
+    data: { email: "sanjay@complyance.io" }
+  });
+  expect(loginResponse.ok()).toBeTruthy();
+
+  const response = await request.post("/api/candidates/1786274138922/status", {
+    data: { status: "round1" }
+  });
+  expect(response.status()).toBe(409);
+  await expect(response.json()).resolves.toEqual({
+    error: "Only candidates under 7 years of experience can be advanced"
+  });
+});
+
 test("syncs status changes across two logged-in users", async ({ browser }) => {
   const sanjayContext = await browser.newContext();
   const arulContext = await browser.newContext();
