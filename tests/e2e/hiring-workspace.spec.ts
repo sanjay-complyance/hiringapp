@@ -36,6 +36,14 @@ test("blocks advancing candidates at or above 7 years", async ({ request }) => {
   });
 });
 
+test("opens candidate tabs on mobile without sticky hero overlap", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, "sanjay@complyance.io");
+
+  await page.getByRole("button", { name: /PDF/ }).click();
+  await expect(page.locator(".pdfPanel iframe")).toBeVisible();
+});
+
 test("syncs status changes across two logged-in users", async ({ browser }) => {
   const sanjayContext = await browser.newContext();
   const arulContext = await browser.newContext();

@@ -1107,17 +1107,18 @@ textarea {
 
   .queuePanel {
     height: auto;
-    max-height: 46dvh;
+    max-height: 38dvh;
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
 
   .candidateHero {
+    position: static;
     grid-template-columns: minmax(0, 1fr);
   }
 
   .candidateWorkspace {
-    height: auto;
+    height: 100%;
     min-height: 0;
   }
 
@@ -1128,7 +1129,6 @@ textarea {
 
 @media (max-width: 820px) {
   .appHeader,
-  .summaryTiles,
   .heroControls,
   .roundAreas,
   .scoreSummary,
@@ -1137,7 +1137,37 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .appHeader {
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .summaryTiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stat {
+    min-height: 52px;
+    padding: 8px 10px;
+  }
+
+  .stat strong {
+    font-size: 21px;
+  }
+
+  .queuePanel {
+    max-height: 28dvh;
+  }
+
+  .queueControls {
+    gap: 8px;
+    padding: 10px;
+  }
+
   .tabs {
+    position: sticky;
+    top: 0;
+    z-index: 2;
     overflow-x: auto;
   }
 
