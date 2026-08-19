@@ -36,6 +36,21 @@ test("blocks advancing candidates at or above 7 years", async ({ request }) => {
   });
 });
 
+test("ranks eligible under-seven candidates ahead of over-experience resumes", async ({ request }) => {
+  const loginResponse = await request.post("/api/session", {
+    data: { email: "sanjay@complyance.io" }
+  });
+  expect(loginResponse.ok()).toBeTruthy();
+
+  const response = await request.get("/api/sync?since=0&includeData=1");
+  expect(response.ok()).toBeTruthy();
+  const body = await response.json();
+  const candidates = body.data.candidates as Array<{ rank: number; years: number | null; stage0: { score: number } }>;
+
+  expect(candidates.slice(0, 10).every((candidate) => typeof candidate.years === "number" && candidate.years < 7)).toBeTruthy();
+  expect(candidates.find((candidate) => candidate.years !== null && candidate.years >= 7)?.rank).toBeGreaterThan(50);
+});
+
 test("opens candidate tabs on mobile without sticky hero overlap", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, "sanjay@complyance.io");

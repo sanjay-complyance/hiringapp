@@ -1,5 +1,6 @@
 import staticData from "@/data/resume-evaluations.json";
 import { query } from "@/lib/db";
+import { compareCandidatesForRanking } from "@/lib/ranking";
 import type { Candidate, CandidateWorkflow, EvaluationData, User } from "@/lib/types";
 
 type CandidateRow = {
@@ -10,7 +11,7 @@ type CandidateRow = {
   stage0_score: number;
   stage0_band: string;
   stage0: Candidate["stage0"];
-  profile: Record<string, unknown>;
+  profile: Record<string, unknown> & { years?: unknown; keyword_counts?: Record<string, number> };
   status: CandidateWorkflow["status"];
   owner_user_id: string | null;
 };
@@ -59,6 +60,7 @@ function asRecordArray(value: unknown): Record<string, string[]> {
 
 function mapCandidate(row: CandidateRow, rank: number, workflow: CandidateWorkflow): Candidate {
   const profile = row.profile ?? {};
+  const keywordCounts = typeof profile.keyword_counts === "object" && profile.keyword_counts ? (profile.keyword_counts as Record<string, number>) : {};
   return {
     id: row.id,
     rank,
@@ -80,7 +82,7 @@ function mapCandidate(row: CandidateRow, rank: number, workflow: CandidateWorkfl
     project_excerpt: typeof profile.project_excerpt === "string" ? profile.project_excerpt : "",
     first_lines: asArray(profile.first_lines),
     stage0: row.stage0,
-    keyword_counts: typeof profile.keyword_counts === "object" && profile.keyword_counts ? (profile.keyword_counts as Record<string, number>) : {},
+    keyword_counts: keywordCounts,
     workflow
   };
 }
@@ -194,7 +196,20 @@ export async function getAppData(): Promise<EvaluationData> {
     ...(staticData as unknown as EvaluationData),
     users: userResult.rows,
     syncVersion: syncResult.rows[0]?.version ?? 0,
-    candidates: candidateResult.rows.map((row, index) => mapCandidate(row, index + 1, workflows.get(row.id) ?? {
+    candidates: [...candidateResult.rows].sort((a, b) => compareCandidatesForRanking(
+      {
+        name: a.name,
+        years: typeof a.profile.years === "number" ? a.profile.years : null,
+        stage0: a.stage0,
+        keyword_counts: a.profile.keyword_counts ?? {}
+      },
+      {
+        name: b.name,
+        years: typeof b.profile.years === "number" ? b.profile.years : null,
+        stage0: b.stage0,
+        keyword_counts: b.profile.keyword_counts ?? {}
+      }
+    )).map((row, index) => mapCandidate(row, index + 1, workflows.get(row.id) ?? {
       status: "new",
       ownerUserId: "",
       notes: "",
