@@ -4,7 +4,7 @@ import { Pool } from "pg";
 
 const targetMaxYears = 7;
 const reviewerEmail = "sanjay@complyance.io";
-const activeStatuses = new Set(["new", "round1", "round2", "round3", "round4", "references", "hire"]);
+const activeStatuses = new Set(["new", "round1", "round2", "round3", "hire"]);
 
 async function loadDatabaseUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;

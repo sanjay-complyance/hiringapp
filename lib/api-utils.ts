@@ -8,8 +8,6 @@ export const statuses = new Set<CandidateWorkflow["status"]>([
   "round1",
   "round2",
   "round3",
-  "round4",
-  "references",
   "hire",
   "no_hire",
   "hold"

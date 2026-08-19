@@ -58,7 +58,7 @@ async function main() {
         stage0_band text not null default 'Unscreened',
         stage0 jsonb not null default '{}'::jsonb,
         profile jsonb not null default '{}'::jsonb,
-        status text not null default 'new' check (status in ('new','round1','round2','round3','round4','references','hire','no_hire','hold')),
+        status text not null default 'new' check (status in ('new','round1','round2','round3','hire','no_hire','hold')),
         owner_user_id uuid references app_users(id) on delete set null,
         created_by uuid references app_users(id) on delete set null,
         created_at timestamptz not null default now(),

@@ -89,7 +89,7 @@ export type User = {
 };
 
 export type CandidateWorkflow = {
-  status: "new" | "round1" | "round2" | "round3" | "round4" | "references" | "hire" | "no_hire" | "hold";
+  status: "new" | "round1" | "round2" | "round3" | "hire" | "no_hire" | "hold";
   ownerUserId: string;
   notes: string;
   roundScores: Record<string, Record<string, number>>;

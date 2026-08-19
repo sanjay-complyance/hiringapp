@@ -36,17 +36,15 @@ const metricOrder: MetricId[] = [
 
 const statusLabels: Record<CandidateWorkflow["status"], string> = {
   new: "New",
-  round1: "Round 1",
-  round2: "Round 2",
-  round3: "Round 3",
-  round4: "Round 4",
-  references: "References",
+  round1: "HR phone screen",
+  round2: "Tech + decision call",
+  round3: "Final panel",
   hire: "Hire",
   no_hire: "No hire",
   hold: "Hold"
 };
 
-const activeWorkflowStatuses = new Set<CandidateWorkflow["status"]>(["round1", "round2", "round3", "round4", "references", "hire"]);
+const activeWorkflowStatuses = new Set<CandidateWorkflow["status"]>(["round1", "round2", "round3", "hire"]);
 
 function defaultWorkflow(): CandidateWorkflow {
   return {
@@ -118,19 +116,17 @@ function sortedCandidates(candidates: Candidate[], sortMode: SortMode) {
   });
 }
 
-function roundTotal(workflow: CandidateWorkflow, roundId: string) {
+function roundTotal(workflow: CandidateWorkflow, roundId: string, round?: RoundScorecard) {
   const scores = workflow.roundScores[roundId] ?? {};
-  return Object.values(scores).reduce((sum, score) => sum + Number(score || 0), 0);
+  const activeScores = round?.areas ? round.areas.map(([areaId]) => scores[areaId] ?? 0) : Object.values(scores);
+  return activeScores.reduce((sum, score) => sum + Number(score || 0), 0);
 }
 
-function finalTotal(candidate: Candidate, workflow: CandidateWorkflow) {
-  return (
-    candidate.stage0.score +
-    roundTotal(workflow, "round1") +
-    roundTotal(workflow, "round2") +
-    roundTotal(workflow, "round3") +
-    roundTotal(workflow, "round4")
-  );
+function finalTotal(candidate: Candidate, workflow: CandidateWorkflow, data: EvaluationData) {
+  const interviewTotal = Object.entries(data.round_scorecards)
+    .filter(([roundId]) => roundId !== "stage0")
+    .reduce((sum, [roundId, round]) => sum + roundTotal(workflow, roundId, round), 0);
+  return candidate.stage0.score + interviewTotal;
 }
 
 function decisionGuide(total: number) {
@@ -694,7 +690,7 @@ function CandidateHero({
           {experienceLabel(candidate)} · target is under 7 years · {candidate.pages ?? "?"} pages · {candidate.file}
         </p>
         <div className="heroActions">
-          <button onClick={() => onQuickStatus("round1")} disabled={!canAdvance}>Move to Round 1</button>
+          <button onClick={() => onQuickStatus("round1")} disabled={!canAdvance}>Move to HR screen</button>
           <button onClick={() => onQuickStatus("hold")}>Hold</button>
           <button onClick={() => onQuickStatus("no_hire")}>No hire</button>
         </div>
@@ -777,7 +773,7 @@ function Overview({
           <textarea
             value={workflow.notes}
             onChange={(event) => onNotes(event.target.value)}
-            placeholder="Manual checks, doubts, interview follow-ups, or references to verify."
+            placeholder="Manual checks, doubts, phone-screen notes, or interview follow-ups to verify."
           />
           <button className="saveButton" onClick={() => onSaveNotes(workflow.notes)}>
             Save note
@@ -831,7 +827,7 @@ function ActionBanner({ candidate }: { candidate: Candidate }) {
     ? "Rejected by the experience-fit rule. This search targets candidates under 7 years of experience."
     : !hasPreferredExperience(candidate)
       ? "Manual verification required before advancing. This search targets candidates under 7 years of experience."
-      : "Resume-only strict screen. Use this to decide interview queue priority, then verify with Round 1-3 evidence.";
+      : "Resume-only strict screen. Use this to decide interview queue priority, then verify through the HR phone screen and two video calls.";
   return (
     <section className={`actionBanner ${action}`}>
       <div>
@@ -966,7 +962,7 @@ function Scorecards({
   onScore: (roundId: string, areaId: string, score: number) => void;
   onNote: (roundId: string, note: string) => void;
 }) {
-  const total = finalTotal(candidate, workflow);
+  const total = finalTotal(candidate, workflow, data);
   return (
     <div className="scorecardLayout">
       <div className="scoreSummary">
@@ -978,7 +974,7 @@ function Scorecards({
           <span>Decision guide</span>
           <strong>{decisionGuide(total)}</strong>
         </div>
-        <p>Hard rules still require Round 2 &gt;= 38/50, Round 3 &gt;= 30/40, security/privacy judgment, testing judgment, real ownership, and working-code evidence.</p>
+        <p>Hard rules require a pass in the HR phone screen, Round 2 technical decision call &gt;= 75/100, Round 3 final panel &gt;= 23/30, and clear evidence of ownership, testing, security judgment, and working-code reasoning.</p>
       </div>
       <div className="roundStack">
         {Object.entries(data.round_scorecards)
@@ -1004,7 +1000,7 @@ function RoundCard({
   onScore: (roundId: string, areaId: string, score: number) => void;
   onNote: (roundId: string, note: string) => void;
 }) {
-  const total = roundTotal(workflow, roundId);
+  const total = roundTotal(workflow, roundId, round);
   const passed = total >= round.pass_bar;
   return (
     <section className="roundSection">
@@ -1080,7 +1076,7 @@ function PdfView({ candidate }: { candidate: Candidate }) {
 
 function ProcessGuide({ data, candidate, workflow }: { data: EvaluationData; candidate: Candidate; workflow: CandidateWorkflow }) {
   const stages = Object.entries(data.round_scorecards);
-  const total = finalTotal(candidate, workflow);
+  const total = finalTotal(candidate, workflow, data);
   return (
     <div className="process">
       <section className="scoreSummary">
@@ -1099,7 +1095,7 @@ function ProcessGuide({ data, candidate, workflow }: { data: EvaluationData; can
       </section>
       <section className="processColumns">
         {stages.map(([id, stage]) => {
-          const score = id === "stage0" ? candidate.stage0.score : roundTotal(workflow, id);
+          const score = id === "stage0" ? candidate.stage0.score : roundTotal(workflow, id, stage);
           const passed = score >= stage.pass_bar;
           return (
             <article key={id} className="processStep">
@@ -1123,7 +1119,7 @@ function ProcessGuide({ data, candidate, workflow }: { data: EvaluationData; can
           <span>128-144</span>
           <strong>Hire</strong>
           <span>115-127</span>
-          <strong>Lean hire if gaps are minor and references are strong</strong>
+          <strong>Lean hire if gaps are minor and final panel alignment is strong</strong>
           <span>98-114</span>
           <strong>Lean no-hire</strong>
           <span>Below 98</span>
@@ -1131,18 +1127,14 @@ function ProcessGuide({ data, candidate, workflow }: { data: EvaluationData; can
         </div>
       </section>
       <section className="panel">
-        <h3>Reference Check Questions</h3>
+        <h3>Final Decision Checklist</h3>
         <ol>
-          <li>What did this person own technically?</li>
-          <li>Were they hands-on?</li>
-          <li>Could they debug production issues?</li>
-          <li>Did they write or review meaningful automated tests?</li>
-          <li>Did they review code effectively?</li>
-          <li>Did they mentor others?</li>
-          <li>How did they handle ambiguous requirements?</li>
-          <li>How did they behave under release pressure?</li>
-          <li>Would you hire them again?</li>
-          <li>Where would they need support?</li>
+          <li>Did HR confirm role fit, company fit, availability, compensation, and experience under 7 years?</li>
+          <li>Did the technical call prove hands-on ownership, testing, debugging, and security judgment?</li>
+          <li>Did the candidate explain practical code and tradeoffs clearly enough for the role?</li>
+          <li>Did the final panel align on product judgment, release-risk maturity, and founder fit?</li>
+          <li>Are joining date, compensation, work mode, and role expectations mutually clear?</li>
+          <li>What support would this candidate need in the first 90 days?</li>
         </ol>
       </section>
     </div>

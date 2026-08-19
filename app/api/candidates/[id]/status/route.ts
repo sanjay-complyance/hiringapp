@@ -5,7 +5,7 @@ import type { CandidateWorkflow } from "@/lib/types";
 
 export const runtime = "nodejs";
 
-const activeStatuses = new Set<CandidateWorkflow["status"]>(["round1", "round2", "round3", "round4", "references", "hire"]);
+const activeStatuses = new Set<CandidateWorkflow["status"]>(["round1", "round2", "round3", "hire"]);
 
 type StatusPayload = {
   status?: CandidateWorkflow["status"];

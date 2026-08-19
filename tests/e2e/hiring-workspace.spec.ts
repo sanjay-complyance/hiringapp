@@ -44,6 +44,29 @@ test("opens candidate tabs on mobile without sticky hero overlap", async ({ page
   await expect(page.locator(".pdfPanel iframe")).toBeVisible();
 });
 
+test("shows the three-round hiring process without deprecated stages", async ({ page }) => {
+  await login(page, "sanjay@complyance.io");
+
+  await expect(page.getByTestId("status-select").locator("option")).toHaveText([
+    "New",
+    "HR phone screen",
+    "Tech + decision call",
+    "Final panel",
+    "Hire",
+    "No hire",
+    "Hold"
+  ]);
+
+  await page.getByRole("button", { name: /Process/ }).click();
+  await expect(page.getByRole("heading", { name: "Round 1 HR phone screen" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Round 2 technical and decision call" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Round 3 final panel" })).toBeVisible();
+  await expect(page.getByText("Round 4")).toHaveCount(0);
+
+  await page.getByRole("button", { name: /Rounds/ }).click();
+  await expect(page.locator(".roundSection")).toHaveCount(3);
+});
+
 test("syncs status changes across two logged-in users", async ({ browser }) => {
   const sanjayContext = await browser.newContext();
   const arulContext = await browser.newContext();
