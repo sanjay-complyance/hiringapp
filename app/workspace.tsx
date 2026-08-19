@@ -21,7 +21,7 @@ import type { FormEvent, ReactNode } from "react";
 import type { Candidate, CandidateWorkflow, EvaluationData, MetricId, RoundScorecard, User } from "@/lib/types";
 
 type SortMode = "rank" | "score" | "name" | "years";
-type BandMode = "all" | "advance" | "manual" | "near" | "reject";
+type BandMode = "all" | "under7" | "advance" | "manual" | "verify" | "reject";
 type Tab = "overview" | "scorecards" | "pdf" | "process";
 type SyncState = "live" | "checking" | "syncing" | "offline";
 
@@ -46,6 +46,8 @@ const statusLabels: Record<CandidateWorkflow["status"], string> = {
   hold: "Hold"
 };
 
+const activeWorkflowStatuses = new Set<CandidateWorkflow["status"]>(["round1", "round2", "round3", "round4", "references", "hire"]);
+
 function defaultWorkflow(): CandidateWorkflow {
   return {
     status: "new",
@@ -58,24 +60,49 @@ function defaultWorkflow(): CandidateWorkflow {
 }
 
 function actionFor(candidate: Candidate): BandMode {
+  if (isOverExperienceTarget(candidate)) return "reject";
+  if (!hasPreferredExperience(candidate)) return "verify";
   const score = candidate.stage0.score;
   const strictPass = candidate.stage0.pass_bar;
   const planPass = candidate.stage0.hiring_plan_pass_bar ?? 14;
   if (score >= strictPass) return "advance";
   if (score >= planPass) return "manual";
-  if (score >= Math.max(0, planPass - 3)) return "near";
   return "reject";
 }
 
 function actionLabel(action: BandMode) {
+  if (action === "under7") return "Under 7";
   if (action === "advance") return "Strict advance";
   if (action === "manual") return "Manual hold";
-  if (action === "near") return "Near miss";
+  if (action === "verify") return "Verify exp";
   if (action === "reject") return "Reject";
   return "All";
 }
 
-function scoreClass(score: number) {
+function hasPreferredExperience(candidate: Candidate) {
+  return typeof candidate.years === "number" && candidate.years < 7;
+}
+
+function isOverExperienceTarget(candidate: Candidate) {
+  return typeof candidate.years === "number" && candidate.years > 7;
+}
+
+function experienceLabel(candidate: Candidate) {
+  if (typeof candidate.years !== "number") return "Years unclear";
+  if (candidate.years < 7) return "Under 7 fit";
+  if (candidate.years === 7) return "7 yrs - verify";
+  return "Over 7 yrs";
+}
+
+function screenLabel(candidate: Candidate) {
+  if (isOverExperienceTarget(candidate)) return "Over 7 yrs";
+  if (!hasPreferredExperience(candidate)) return "Verify exp";
+  return actionLabel(actionFor(candidate));
+}
+
+function scoreClass(candidate: Candidate) {
+  const score = candidate.stage0.score;
+  if (isOverExperienceTarget(candidate) || !hasPreferredExperience(candidate)) return "score reject";
   if (score >= 17) return "score strong";
   if (score >= 14) return "score pass";
   if (score >= 11) return "score borderline";
@@ -86,8 +113,9 @@ function sortedCandidates(candidates: Candidate[], sortMode: SortMode) {
   return [...candidates].sort((a, b) => {
     if (sortMode === "name") return a.name.localeCompare(b.name);
     if (sortMode === "years") return (b.years ?? -1) - (a.years ?? -1) || a.rank - b.rank;
-    if (sortMode === "score") return b.stage0.score - a.stage0.score || a.rank - b.rank;
-    return a.rank - b.rank;
+    const fitDelta = Number(hasPreferredExperience(b)) - Number(hasPreferredExperience(a));
+    if (sortMode === "score") return fitDelta || b.stage0.score - a.stage0.score || a.rank - b.rank;
+    return fitDelta || a.rank - b.rank;
   });
 }
 
@@ -224,8 +252,10 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
   }
 
   const stats = useMemo(() => {
-    const buckets = { advance: 0, manual: 0, near: 0, reject: 0 };
+    const buckets = { under7: 0, advance: 0, manual: 0, verify: 0, reject: 0, over7: 0 };
     liveData.candidates.forEach((candidate) => {
+      if (hasPreferredExperience(candidate)) buckets.under7 += 1;
+      if (isOverExperienceTarget(candidate)) buckets.over7 += 1;
       buckets[actionFor(candidate) as keyof typeof buckets] += 1;
     });
     return buckets;
@@ -235,7 +265,7 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
     const q = query.trim().toLowerCase();
     return sortedCandidates(liveData.candidates, sortMode).filter((candidate) => {
       const action = actionFor(candidate);
-      if (bandMode === "reject" && action !== "reject" && action !== "near") return false;
+      if (bandMode === "under7" && !hasPreferredExperience(candidate)) return false;
       if (bandMode !== "all" && bandMode !== "reject" && bandMode !== action) return false;
       if (!q) return true;
       const haystack = [
@@ -354,9 +384,9 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
         </div>
         <div className="summaryTiles" aria-label="Strict resume screen summary">
           <Stat label="Reviewed" value={liveData.candidates.length.toString()} />
+          <Stat label="Under 7" value={stats.under7.toString()} tone="good" />
           <Stat label="Advance" value={stats.advance.toString()} tone="good" />
-          <Stat label="Manual" value={stats.manual.toString()} tone="warn" />
-          <Stat label="Reject" value={(stats.near + stats.reject).toString()} tone="bad" />
+          <Stat label="Over 7" value={stats.over7.toString()} tone="bad" />
         </div>
         <UserBadge
           user={currentUser}
@@ -378,9 +408,11 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
             </label>
             <div className="bucketTabs" aria-label="Candidate buckets">
               <BucketButton active={bandMode === "all"} label="All" count={liveData.candidates.length} onClick={() => setBandMode("all")} />
+              <BucketButton active={bandMode === "under7"} label="Under 7" count={stats.under7} onClick={() => setBandMode("under7")} />
               <BucketButton active={bandMode === "advance"} label="Advance" count={stats.advance} onClick={() => setBandMode("advance")} />
               <BucketButton active={bandMode === "manual"} label="Manual" count={stats.manual} onClick={() => setBandMode("manual")} />
-              <BucketButton active={bandMode === "reject"} label="Reject" count={stats.near + stats.reject} onClick={() => setBandMode("reject")} />
+              <BucketButton active={bandMode === "verify"} label="Verify" count={stats.verify} onClick={() => setBandMode("verify")} />
+              <BucketButton active={bandMode === "reject"} label="Reject" count={stats.reject} onClick={() => setBandMode("reject")} />
             </div>
             <label className="selectControl">
               <Filter size={16} />
@@ -408,10 +440,10 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
                 <span className="candidateMain">
                   <span className="candidateName">{candidate.name}</span>
                   <span className="candidateSub">
-                    {candidate.years ? `${candidate.years}+ yrs` : "years unclear"} · {actionLabel(actionFor(candidate))}
+                    {experienceLabel(candidate)} · {screenLabel(candidate)}
                   </span>
                 </span>
-                <span className={scoreClass(candidate.stage0.score)}>{candidate.stage0.score}</span>
+                <span className={scoreClass(candidate)}>{candidate.stage0.score}</span>
               </button>
             ))}
           </div>
@@ -650,6 +682,7 @@ function CandidateHero({
   onNext?: () => void;
 }) {
   const action = actionFor(candidate);
+  const canAdvance = hasPreferredExperience(candidate);
   return (
     <header className="candidateHero">
       <div className="heroMain">
@@ -659,10 +692,10 @@ function CandidateHero({
           <span className={`actionPill ${action}`}>{actionLabel(action)}</span>
         </div>
         <p>
-          {candidate.years ? `${candidate.years}+ years mentioned` : "Years unclear"} · {candidate.pages ?? "?"} pages · {candidate.file}
+          {experienceLabel(candidate)} · target is under 7 years · {candidate.pages ?? "?"} pages · {candidate.file}
         </p>
         <div className="heroActions">
-          <button onClick={() => onQuickStatus("round1")}>Move to Round 1</button>
+          <button onClick={() => onQuickStatus("round1")} disabled={!canAdvance}>Move to Round 1</button>
           <button onClick={() => onQuickStatus("hold")}>Hold</button>
           <button onClick={() => onQuickStatus("no_hire")}>No hire</button>
         </div>
@@ -687,7 +720,7 @@ function CandidateHero({
           <span>Status</span>
           <select data-testid="status-select" value={workflow.status} onChange={(event) => onStatus(event.target.value as CandidateWorkflow["status"])}>
             {Object.entries(statusLabels).map(([value, label]) => (
-              <option key={value} value={value}>
+              <option key={value} value={value} disabled={!canAdvance && activeWorkflowStatuses.has(value as CandidateWorkflow["status"])}>
                 {label}
               </option>
             ))}
@@ -795,15 +828,18 @@ function activityLabel(item: CandidateWorkflow["activity"][number]) {
 function ActionBanner({ candidate }: { candidate: Candidate }) {
   const action = actionFor(candidate);
   const icon = action === "advance" ? <CheckCircle2 size={18} /> : action === "reject" ? <XCircle size={18} /> : <AlertTriangle size={18} />;
+  const message = isOverExperienceTarget(candidate)
+    ? "Rejected by the new experience-fit rule. This search targets candidates under 7 years of experience."
+    : !hasPreferredExperience(candidate)
+      ? "Manual verification required before advancing. This search targets candidates under 7 years of experience."
+      : "Resume-only strict screen. Use this to decide interview queue priority, then verify with Round 1-3 evidence.";
   return (
     <section className={`actionBanner ${action}`}>
       <div>
         {icon}
         <div>
-          <h3>{actionLabel(action)}</h3>
-          <p>
-            Resume-only strict screen. Use this to decide interview queue priority, then verify with Round 1-3 evidence.
-          </p>
+          <h3>{screenLabel(candidate)}</h3>
+          <p>{message}</p>
         </div>
       </div>
       {candidate.stage0.gaps_or_review_notes.length > 0 && <span>{candidate.stage0.gaps_or_review_notes.join("; ")}</span>}

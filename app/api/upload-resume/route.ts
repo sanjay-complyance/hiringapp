@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { NextResponse } from "next/server";
 import { auditEvent, jsonError, jsonFromError, requireActor } from "@/lib/api-utils";
 import { query } from "@/lib/db";
-import type { Candidate, MetricId } from "@/lib/types";
+import type { Candidate, CandidateWorkflow, MetricId } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -118,6 +118,13 @@ function extractContacts(text: string) {
   };
 }
 
+function inferYears(text: string) {
+  const matches = [...text.matchAll(/(\d{1,2})(?:\.\d+)?\s*\+?\s*(?:years|yrs)\b/gi)]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value) && value > 0 && value < 40);
+  return matches.length > 0 ? Math.max(...matches) : null;
+}
+
 function inferSkills(text: string) {
   const groups: Record<string, string[]> = {
     languages: ["TypeScript", "JavaScript", "Python", "Java", "Go", "C#", "PHP", "Ruby", "Kotlin", "Swift"],
@@ -161,6 +168,14 @@ function strictStage0(text: string): Candidate["stage0"] {
     metrics,
     gaps_or_review_notes: gaps
   };
+}
+
+function uploadedStatus(stage0: Candidate["stage0"], years: number | null): CandidateWorkflow["status"] {
+  if (typeof years === "number" && years > 7) return "no_hire";
+  if (years === null || years === 7) return "hold";
+  if (stage0.score >= stage0.pass_bar) return "round1";
+  if (stage0.score >= (stage0.hiring_plan_pass_bar ?? 14)) return "hold";
+  return "no_hire";
 }
 
 async function extractPdfText(filePath: string) {
@@ -212,6 +227,8 @@ export async function POST(request: Request) {
     const name = inferName(text, originalName, form.get("name"));
     if (name.length > 160) return jsonError("Candidate name is too long");
     const stage0 = strictStage0(text);
+    const years = inferYears(text);
+    const status = uploadedStatus(stage0, years);
     const candidateId = `uploaded-${slug(name)}-${randomUUID().slice(0, 8)}`;
     const firstLines = text
       .split(/\r?\n/)
@@ -220,7 +237,7 @@ export async function POST(request: Request) {
       .slice(0, 12);
     const profile = {
       rank: null,
-      years: null,
+      years,
       contacts: extractContacts(text),
       skills: inferSkills(text),
       recent_titles: uniqueLines(text, ["engineer", "developer", "lead", "architect", "manager"]),
@@ -237,9 +254,9 @@ export async function POST(request: Request) {
       insert into candidates (
         id, name, file_name, source_path, stage0_score, stage0_band, stage0, profile, status, owner_user_id, created_by
       )
-      values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,'new',$9,$9)
+      values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$10)
       `,
-      [candidateId, name, fileName, `db:${fileName}`, stage0.score, stage0.band, JSON.stringify(stage0), JSON.stringify(profile), actorUserId]
+      [candidateId, name, fileName, `db:${fileName}`, stage0.score, stage0.band, JSON.stringify(stage0), JSON.stringify(profile), status, actorUserId]
     );
     await query(
       `
@@ -259,8 +276,8 @@ export async function POST(request: Request) {
       candidateId,
       actorUserId,
       action: "upload_resume",
-      toStatus: "new",
-      payload: { fileName, stage0Score: stage0.score, stage0Band: stage0.band }
+      toStatus: status,
+      payload: { fileName, years, stage0Score: stage0.score, stage0Band: stage0.band }
     });
 
     return NextResponse.json({ candidateId, name, stage0 });

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test:e2e": "playwright test",
-    "db:init": "node scripts/db-init.mjs"
+    "db:init": "node scripts/db-init.mjs",
+    "db:experience-fit": "node scripts/apply-experience-fit.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

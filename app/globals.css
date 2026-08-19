@@ -596,6 +596,8 @@ textarea {
 
 .actionPill.manual,
 .actionBanner.manual,
+.actionPill.verify,
+.actionBanner.verify,
 .actionPill.near,
 .actionBanner.near {
   background: var(--warn-bg);

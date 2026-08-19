@@ -25,6 +25,8 @@ Use a long random `AUTH_SECRET` so login sessions stay signed across deployments
 
 The app stores users, candidates, audit events, interview notes, round scores, and uploaded resume PDFs in Postgres. If you point Vercel at a fresh database, run `npm run db:init` once from a local machine with `DATABASE_URL` set before deploying.
 
+The current shortlist rule targets candidates under 7 years of experience. Run `npm run db:experience-fit` after reseeding or importing candidates to move over-7 candidates to no-hire and hold exactly-7/unclear profiles for manual verification.
+
 ## Default users
 
 - `sanjay@complyance.io`
