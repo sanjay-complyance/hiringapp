@@ -24,10 +24,8 @@ export class AuthError extends Error {
 }
 
 function authSecret() {
-  const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? process.env.DATABASE_URL;
-  if (!secret) {
-    throw new Error("AUTH_SECRET or DATABASE_URL is required for session signing");
-  }
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) throw new Error("AUTH_SECRET is required for session signing");
   return secret;
 }
 
