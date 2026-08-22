@@ -23,13 +23,27 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return jsonError("Valid candidate status is required");
     }
 
-    const current = await query<{ status: CandidateWorkflow["status"]; years: string | null }>(
-      "select status, profile ->> 'years' as years from candidates where id = $1",
+    const current = await query<{ status: CandidateWorkflow["status"]; years: string | null; top_fit_approved: boolean }>(
+      `
+      select
+        candidates.status,
+        candidates.profile ->> 'years' as years,
+        exists (
+          select 1
+          from audit_events
+          where audit_events.candidate_id = candidates.id
+            and audit_events.action = 'final_resume_shortlist'
+            and audit_events.payload ->> 'decision' = 'top_fit'
+        ) as top_fit_approved
+      from candidates
+      where candidates.id = $1
+      `,
       [id]
     );
     if (current.rowCount !== 1) return jsonError("Candidate not found", 404);
     const years = current.rows[0].years === null ? null : Number(current.rows[0].years);
-    if (activeStatuses.has(status) && (!Number.isFinite(years) || Number(years) >= 7)) {
+    const hasAdvanceApproval = activeStatuses.has(current.rows[0].status) || current.rows[0].top_fit_approved;
+    if (activeStatuses.has(status) && !hasAdvanceApproval && (!Number.isFinite(years) || Number(years) >= 7)) {
       return jsonError("Only candidates under 7 years of experience can be advanced", 409);
     }
 

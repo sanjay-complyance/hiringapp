@@ -1128,6 +1128,21 @@ textarea {
 }
 
 @media (max-width: 820px) {
+  html,
+  body {
+    height: auto;
+  }
+
+  body {
+    overflow: auto;
+  }
+
+  .workspace {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
   .appHeader,
   .heroControls,
   .roundAreas,
@@ -1156,7 +1171,25 @@ textarea {
   }
 
   .queuePanel {
-    max-height: 28dvh;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .reviewShell {
+    height: auto;
+    display: block;
+    overflow: visible;
+  }
+
+  .candidateList {
+    flex: none;
+    height: 260px;
+  }
+
+  .candidateWorkspace {
+    height: auto;
+    overflow: visible;
   }
 
   .queueControls {

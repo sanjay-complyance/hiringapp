@@ -20,8 +20,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { Candidate, CandidateWorkflow, EvaluationData, MetricId, RoundScorecard, User } from "@/lib/types";
 
-type SortMode = "rank" | "score" | "name" | "years";
-type BandMode = "all" | "under7" | "advance" | "manual" | "verify" | "reject";
+type SortMode = "decision" | "rank" | "score" | "name" | "years";
+type DecisionMode = "all" | "top_fit" | "not_moved" | "pending";
+type ResumeAction = "advance" | "manual" | "verify" | "reject";
 type Tab = "overview" | "scorecards" | "pdf" | "process";
 type SyncState = "live" | "checking" | "syncing" | "offline";
 
@@ -40,7 +41,7 @@ const statusLabels: Record<CandidateWorkflow["status"], string> = {
   round2: "Tech + decision call",
   round3: "Final panel",
   hire: "Hire",
-  no_hire: "No hire",
+  no_hire: "Not moved",
   hold: "Hold"
 };
 
@@ -57,7 +58,7 @@ function defaultWorkflow(): CandidateWorkflow {
   };
 }
 
-function actionFor(candidate: Candidate): BandMode {
+function resumeActionFor(candidate: Candidate): ResumeAction {
   if (isAtOrAboveExperienceLimit(candidate)) return "reject";
   if (!hasPreferredExperience(candidate)) return "verify";
   const score = candidate.stage0.score;
@@ -68,13 +69,12 @@ function actionFor(candidate: Candidate): BandMode {
   return "reject";
 }
 
-function actionLabel(action: BandMode) {
-  if (action === "under7") return "Under 7";
+function resumeActionLabel(action: ResumeAction) {
   if (action === "advance") return "Strict advance";
   if (action === "manual") return "Manual hold";
   if (action === "verify") return "Verify exp";
   if (action === "reject") return "Reject";
-  return "All";
+  return "Reject";
 }
 
 function hasPreferredExperience(candidate: Candidate) {
@@ -91,10 +91,52 @@ function experienceLabel(candidate: Candidate) {
   return "7+ yrs - not fit";
 }
 
-function screenLabel(candidate: Candidate) {
+function resumeScreenLabel(candidate: Candidate) {
   if (isAtOrAboveExperienceLimit(candidate)) return "7+ yrs";
   if (!hasPreferredExperience(candidate)) return "Verify exp";
-  return actionLabel(actionFor(candidate));
+  return resumeActionLabel(resumeActionFor(candidate));
+}
+
+function workflowFor(candidate: Candidate, workflows?: Record<string, CandidateWorkflow>) {
+  return workflows?.[candidate.id] ?? candidate.workflow ?? defaultWorkflow();
+}
+
+function decisionForStatus(status: CandidateWorkflow["status"]): Exclude<DecisionMode, "all"> {
+  if (activeWorkflowStatuses.has(status)) return "top_fit";
+  if (status === "no_hire") return "not_moved";
+  return "pending";
+}
+
+function decisionLabel(status: CandidateWorkflow["status"]) {
+  const decision = decisionForStatus(status);
+  if (decision === "top_fit") return "Top fit";
+  if (decision === "not_moved") return "Not moved to next round";
+  return "Pending decision";
+}
+
+function decisionPillLabel(status: CandidateWorkflow["status"]) {
+  const decision = decisionForStatus(status);
+  if (decision === "top_fit") return "Top fit";
+  if (decision === "not_moved") return "Not moved";
+  return "Pending";
+}
+
+function decisionDetail(status: CandidateWorkflow["status"]) {
+  if (status === "no_hire") return "Final decision";
+  return statusLabels[status];
+}
+
+function decisionTone(status: CandidateWorkflow["status"]): ResumeAction {
+  const decision = decisionForStatus(status);
+  if (decision === "top_fit") return "advance";
+  if (decision === "not_moved") return "reject";
+  return "manual";
+}
+
+function hasApprovedExperienceOverride(workflow: CandidateWorkflow) {
+  return workflow.activity.some(
+    (item) => item.action === "final_resume_shortlist" && item.toStatus !== null && activeWorkflowStatuses.has(item.toStatus as CandidateWorkflow["status"])
+  );
 }
 
 function scoreClass(candidate: Candidate) {
@@ -106,10 +148,16 @@ function scoreClass(candidate: Candidate) {
   return "score reject";
 }
 
-function sortedCandidates(candidates: Candidate[], sortMode: SortMode) {
+function sortedCandidates(candidates: Candidate[], sortMode: SortMode, workflows?: Record<string, CandidateWorkflow>) {
   return [...candidates].sort((a, b) => {
     if (sortMode === "name") return a.name.localeCompare(b.name);
     if (sortMode === "years") return (b.years ?? -1) - (a.years ?? -1) || a.rank - b.rank;
+    if (sortMode === "decision") {
+      const priority = { top_fit: 0, pending: 1, not_moved: 2 };
+      const aDecision = decisionForStatus(workflowFor(a, workflows).status);
+      const bDecision = decisionForStatus(workflowFor(b, workflows).status);
+      return priority[aDecision] - priority[bDecision] || a.rank - b.rank;
+    }
     const fitDelta = Number(hasPreferredExperience(b)) - Number(hasPreferredExperience(a));
     if (sortMode === "score") return fitDelta || b.stage0.score - a.stage0.score || a.rank - b.rank;
     return fitDelta || a.rank - b.rank;
@@ -137,6 +185,14 @@ function decisionGuide(total: number) {
   return "No-hire";
 }
 
+function formatActivityTime(value: string) {
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Kolkata"
+  }).format(new Date(value));
+}
+
 function skillsFor(candidate: Candidate) {
   return Object.entries(candidate.skills)
     .flatMap(([group, values]) => values.slice(0, 5).map((value) => `${group.replace("_", " ")}: ${value}`))
@@ -151,9 +207,9 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
   const [liveData, setLiveData] = useState(data);
   const users = liveData.users ?? [];
   const [query, setQuery] = useState("");
-  const [sortMode, setSortMode] = useState<SortMode>("rank");
-  const [bandMode, setBandMode] = useState<BandMode>("all");
-  const [selectedId, setSelectedId] = useState(liveData.candidates[0]?.id ?? "");
+  const [sortMode, setSortMode] = useState<SortMode>("decision");
+  const [decisionMode, setDecisionMode] = useState<DecisionMode>("all");
+  const [selectedId, setSelectedId] = useState(() => sortedCandidates(liveData.candidates, "decision")[0]?.id ?? "");
   const [tab, setTab] = useState<Tab>("overview");
   const [currentUser, setCurrentUser] = useState<User | null>(initialUser);
   const [workflow, setWorkflow] = useState<Record<string, CandidateWorkflow>>(() => workflowsFor(liveData.candidates));
@@ -162,9 +218,14 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
   const currentUserId = currentUser?.id ?? "";
 
   function applyLiveData(nextData: EvaluationData) {
+    const nextWorkflows = workflowsFor(nextData.candidates);
     setLiveData(nextData);
-    setWorkflow(workflowsFor(nextData.candidates));
-    setSelectedId((current) => (nextData.candidates.some((candidate) => candidate.id === current) ? current : nextData.candidates[0]?.id ?? ""));
+    setWorkflow(nextWorkflows);
+    setSelectedId((current) =>
+      nextData.candidates.some((candidate) => candidate.id === current)
+        ? current
+        : sortedCandidates(nextData.candidates, "decision", nextWorkflows)[0]?.id ?? ""
+    );
     setSyncVersion(nextData.syncVersion ?? 0);
     setSyncState("live");
   }
@@ -191,6 +252,11 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
       stopped = true;
     };
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    window.scrollTo({ top: 0, left: 0 });
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -247,26 +313,28 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
   }
 
   const stats = useMemo(() => {
-    const buckets = { under7: 0, advance: 0, manual: 0, verify: 0, reject: 0, over7: 0 };
+    const buckets = { topFit: 0, notMoved: 0, pending: 0 };
     liveData.candidates.forEach((candidate) => {
-      if (hasPreferredExperience(candidate)) buckets.under7 += 1;
-      if (isAtOrAboveExperienceLimit(candidate)) buckets.over7 += 1;
-      buckets[actionFor(candidate) as keyof typeof buckets] += 1;
+      const decision = decisionForStatus(workflowFor(candidate, workflow).status);
+      if (decision === "top_fit") buckets.topFit += 1;
+      if (decision === "not_moved") buckets.notMoved += 1;
+      if (decision === "pending") buckets.pending += 1;
     });
     return buckets;
-  }, [liveData.candidates]);
+  }, [liveData.candidates, workflow]);
 
   const candidates = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return sortedCandidates(liveData.candidates, sortMode).filter((candidate) => {
-      const action = actionFor(candidate);
-      if (bandMode === "under7" && !hasPreferredExperience(candidate)) return false;
-      if (bandMode !== "all" && bandMode !== "reject" && bandMode !== action) return false;
+    return sortedCandidates(liveData.candidates, sortMode, workflow).filter((candidate) => {
+      const status = workflowFor(candidate, workflow).status;
+      if (decisionMode !== "all" && decisionMode !== decisionForStatus(status)) return false;
       if (!q) return true;
       const haystack = [
         candidate.name,
         candidate.file,
         candidate.stage0.band,
+        decisionLabel(status),
+        statusLabels[status],
         candidate.recent_titles.join(" "),
         Object.values(candidate.skills).flat().join(" ")
       ]
@@ -274,7 +342,7 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [liveData.candidates, sortMode, bandMode, query]);
+  }, [liveData.candidates, sortMode, workflow, decisionMode, query]);
 
   if (!currentUser) {
     return (
@@ -289,7 +357,7 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
     );
   }
 
-  const selected = liveData.candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? liveData.candidates[0];
+  const selected = candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? liveData.candidates[0];
   const selectedWorkflow = workflow[selected.id] ?? defaultWorkflow();
   const selectedIndex = candidates.findIndex((candidate) => candidate.id === selected.id);
   const previousCandidate = candidates[selectedIndex - 1];
@@ -377,11 +445,11 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
           <h1>Resume Triage & Hiring Flow</h1>
           <p>Strict resume screen, evidence view, PDF review, and interview scorecards in one place.</p>
         </div>
-        <div className="summaryTiles" aria-label="Strict resume screen summary">
+        <div className="summaryTiles" aria-label="Final shortlist summary">
           <Stat label="Reviewed" value={liveData.candidates.length.toString()} />
-          <Stat label="Under 7" value={stats.under7.toString()} tone="good" />
-          <Stat label="Advance" value={stats.advance.toString()} tone="good" />
-          <Stat label="Over 7" value={stats.over7.toString()} tone="bad" />
+          <Stat label="Top fit" value={stats.topFit.toString()} tone="good" />
+          <Stat label="Not moved" value={stats.notMoved.toString()} tone="bad" />
+          <Stat label="Pending" value={stats.pending.toString()} tone={stats.pending > 0 ? "warn" : undefined} />
         </div>
         <UserBadge
           user={currentUser}
@@ -402,17 +470,16 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, tech, file" />
             </label>
             <div className="bucketTabs" aria-label="Candidate buckets">
-              <BucketButton active={bandMode === "all"} label="All" count={liveData.candidates.length} onClick={() => setBandMode("all")} />
-              <BucketButton active={bandMode === "under7"} label="Under 7" count={stats.under7} onClick={() => setBandMode("under7")} />
-              <BucketButton active={bandMode === "advance"} label="Advance" count={stats.advance} onClick={() => setBandMode("advance")} />
-              <BucketButton active={bandMode === "manual"} label="Manual" count={stats.manual} onClick={() => setBandMode("manual")} />
-              <BucketButton active={bandMode === "verify"} label="Verify" count={stats.verify} onClick={() => setBandMode("verify")} />
-              <BucketButton active={bandMode === "reject"} label="Reject" count={stats.reject} onClick={() => setBandMode("reject")} />
+              <BucketButton active={decisionMode === "all"} label="All" count={liveData.candidates.length} onClick={() => setDecisionMode("all")} />
+              <BucketButton active={decisionMode === "top_fit"} label="Top fit" count={stats.topFit} onClick={() => setDecisionMode("top_fit")} />
+              <BucketButton active={decisionMode === "not_moved"} label="Not moved" count={stats.notMoved} onClick={() => setDecisionMode("not_moved")} />
+              <BucketButton active={decisionMode === "pending"} label="Pending" count={stats.pending} onClick={() => setDecisionMode("pending")} />
             </div>
             <label className="selectControl">
               <Filter size={16} />
               <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
-                <option value="rank">Rank order</option>
+                <option value="decision">Final decision</option>
+                <option value="rank">Resume rank</option>
                 <option value="score">Highest score</option>
                 <option value="years">Years mentioned</option>
                 <option value="name">Name A-Z</option>
@@ -423,7 +490,9 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
           </div>
 
           <div className="candidateList" aria-label="Candidates">
-            {candidates.map((candidate) => (
+            {candidates.map((candidate, index) => {
+              const candidateStatus = workflowFor(candidate, workflow).status;
+              return (
               <button
                 key={candidate.id}
                 className={candidate.id === selected.id ? "candidateRow selected" : "candidateRow"}
@@ -431,16 +500,17 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
                 data-candidate-id={candidate.id}
                 onClick={() => setSelectedId(candidate.id)}
               >
-                <span className="rank">#{candidate.rank}</span>
+                <span className="rank">#{index + 1}</span>
                 <span className="candidateMain">
                   <span className="candidateName">{candidate.name}</span>
                   <span className="candidateSub">
-                    {experienceLabel(candidate)} · {screenLabel(candidate)}
+                    {decisionLabel(candidateStatus)} · {decisionDetail(candidateStatus)}
                   </span>
                 </span>
                 <span className={scoreClass(candidate)}>{candidate.stage0.score}</span>
               </button>
-            ))}
+              );
+            })}
           </div>
         </aside>
 
@@ -448,6 +518,7 @@ export function HiringWorkspace({ data, initialUser = null }: { data: Evaluation
           <CandidateHero
             candidate={selected}
             workflow={selectedWorkflow}
+            queuePosition={selectedIndex >= 0 ? selectedIndex + 1 : selected.rank}
             users={users}
             onStatus={setCandidateStatus}
             onOwner={setCandidateOwner}
@@ -660,6 +731,7 @@ function UploadResumeForm({ onSaved }: { onSaved: () => void }) {
 function CandidateHero({
   candidate,
   workflow,
+  queuePosition,
   users,
   onStatus,
   onOwner,
@@ -669,6 +741,7 @@ function CandidateHero({
 }: {
   candidate: Candidate;
   workflow: CandidateWorkflow;
+  queuePosition: number;
   users: User[];
   onStatus: (status: CandidateWorkflow["status"]) => void;
   onOwner: (owner: string) => void;
@@ -676,23 +749,24 @@ function CandidateHero({
   onPrevious?: () => void;
   onNext?: () => void;
 }) {
-  const action = actionFor(candidate);
-  const canAdvance = hasPreferredExperience(candidate);
+  const tone = decisionTone(workflow.status);
+  const canAdvance =
+    hasPreferredExperience(candidate) || activeWorkflowStatuses.has(workflow.status) || hasApprovedExperienceOverride(workflow);
   return (
     <header className="candidateHero">
       <div className="heroMain">
         <div className="titleLine">
-          <span className="rankBadge">#{candidate.rank}</span>
+          <span className="rankBadge">#{queuePosition}</span>
           <h2>{candidate.name}</h2>
-          <span className={`actionPill ${action}`}>{actionLabel(action)}</span>
+          <span className={`actionPill ${tone}`}>{decisionPillLabel(workflow.status)}</span>
         </div>
         <p>
-          {experienceLabel(candidate)} · target is under 7 years · {candidate.pages ?? "?"} pages · {candidate.file}
+          {experienceLabel(candidate)} · resume evidence: {resumeScreenLabel(candidate)} · {candidate.pages ?? "?"} pages · {candidate.file}
         </p>
         <div className="heroActions">
           <button onClick={() => onQuickStatus("round1")} disabled={!canAdvance}>Move to HR screen</button>
           <button onClick={() => onQuickStatus("hold")}>Hold</button>
-          <button onClick={() => onQuickStatus("no_hire")}>No hire</button>
+          <button onClick={() => onQuickStatus("no_hire")}>Not moved</button>
         </div>
       </div>
       <div className="heroScore">
@@ -762,7 +836,7 @@ function Overview({
   return (
     <div className="overviewGrid">
       <section className="primaryStack">
-        <ActionBanner candidate={candidate} />
+        <ActionBanner candidate={candidate} workflow={workflow} />
         <ScoreBreakdown candidate={candidate} data={data} />
         <EvidenceDeck candidate={candidate} />
       </section>
@@ -801,7 +875,7 @@ function ActivityTimeline({ workflow }: { workflow: CandidateWorkflow }) {
                 <span>{item.actorName ?? item.actorEmail ?? "System"}</span>
               </div>
               {item.body && <p>{item.body}</p>}
-              <time>{new Date(item.createdAt).toLocaleString()}</time>
+              <time>{formatActivityTime(item.createdAt)}</time>
             </li>
           ))}
         </ol>
@@ -820,20 +894,22 @@ function activityLabel(item: CandidateWorkflow["activity"][number]) {
   return item.action?.replaceAll("_", " ") ?? "Updated";
 }
 
-function ActionBanner({ candidate }: { candidate: Candidate }) {
-  const action = actionFor(candidate);
-  const icon = action === "advance" ? <CheckCircle2 size={18} /> : action === "reject" ? <XCircle size={18} /> : <AlertTriangle size={18} />;
-  const message = isAtOrAboveExperienceLimit(candidate)
-    ? "Rejected by the experience-fit rule. This search targets candidates under 7 years of experience."
-    : !hasPreferredExperience(candidate)
-      ? "Manual verification required before advancing. This search targets candidates under 7 years of experience."
-      : "Resume-only strict screen. Use this to decide interview queue priority, then verify through the HR phone screen and two video calls.";
+function ActionBanner({ candidate, workflow }: { candidate: Candidate; workflow: CandidateWorkflow }) {
+  const decision = decisionForStatus(workflow.status);
+  const tone = decisionTone(workflow.status);
+  const icon = decision === "top_fit" ? <CheckCircle2 size={18} /> : decision === "not_moved" ? <XCircle size={18} /> : <AlertTriangle size={18} />;
+  const message =
+    decision === "top_fit"
+      ? `Selected by the hiring team and currently at ${statusLabels[workflow.status]}. Resume score and experience flags remain visible below as supporting evidence.`
+      : decision === "not_moved"
+        ? "Final resume decision: this profile was not moved to the next round. The evidence below remains available for audit and reconsideration."
+        : `No final shortlist decision is recorded. Current workflow status: ${statusLabels[workflow.status]}.`;
   return (
-    <section className={`actionBanner ${action}`}>
+    <section className={`actionBanner ${tone}`}>
       <div>
         {icon}
         <div>
-          <h3>{screenLabel(candidate)}</h3>
+          <h3>{decisionLabel(workflow.status)}</h3>
           <p>{message}</p>
         </div>
       </div>
